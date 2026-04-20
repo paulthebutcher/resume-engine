@@ -1,6 +1,6 @@
 import PQueue from 'p-queue';
 import { getJob, updateJob, getBank, getDefaultResume, getCompTarget } from './db.js';
-import { scoreFit, tailorResume, evaluateMatch, recruiterScan } from './claude.js';
+import { scoreFit, tailorResume, evaluateMatch, recruiterScan, refineResume } from './claude.js';
 import { broadcastJob } from './sse.js';
 
 // Priority constants: higher = runs first
@@ -127,10 +127,17 @@ async function processJobWithFit(jobId) {
 
 // ── Shared steps 2 & 3 ───────────────────────────────────────────────────────
 
+const REFINE_MATCH_THRESHOLD = 80;
+const REFINE_VERDICTS = new Set(['maybe', 'reject']);
+
+function shouldRefine({ matchScore, verdict }) {
+  return (matchScore != null && matchScore < REFINE_MATCH_THRESHOLD) || REFINE_VERDICTS.has(verdict);
+}
+
 async function runTailorAndEvaluate(jobId, fitResult, bankContent, defaultResumeContent) {
   const job = getJob(jobId);
 
-  // Step 2: Tailor
+  // Step 2: Tailor (draft)
   updateAndBroadcast(jobId, { status: 'tailoring' });
   const tailorResult = await withRetry(() =>
     tailorResume(bankContent, defaultResumeContent, job.jd_text, fitResult)
@@ -139,11 +146,14 @@ async function runTailorAndEvaluate(jobId, fitResult, bankContent, defaultResume
     tailored_resume: tailorResult.tailored_resume,
     outreach_blurb: tailorResult.outreach_blurb,
     tailoring_notes: tailorResult.tailoring_notes,
+    draft_resume: null,
+    refinement_notes: null,
+    refined_at: null,
   });
 
-  // Step 3: Match Evaluation
+  // Step 3: Match Evaluation (on draft)
   updateAndBroadcast(jobId, { status: 'evaluating' });
-  const matchResult = await withRetry(() =>
+  let matchResult = await withRetry(() =>
     evaluateMatch(tailorResult.tailored_resume, job.jd_text)
   );
   updateAndBroadcast(jobId, {
@@ -154,10 +164,11 @@ async function runTailorAndEvaluate(jobId, fitResult, bankContent, defaultResume
     match_suggestion: matchResult.improvement_suggestion,
   });
 
-  // Step 4: Recruiter Scan
+  // Step 4: Recruiter Scan (on draft)
+  let scanResult = null;
   const freshJob = getJob(jobId);
   try {
-    const scanResult = await withRetry(() =>
+    scanResult = await withRetry(() =>
       recruiterScan(
         tailorResult.tailored_resume,
         freshJob.jd_text,
@@ -166,12 +177,79 @@ async function runTailorAndEvaluate(jobId, fitResult, bankContent, defaultResume
       )
     );
     updateAndBroadcast(jobId, {
-      status: 'complete',
       recruiter_verdict: scanResult.verdict,
       recruiter_scan: JSON.stringify(scanResult),
     });
   } catch (err) {
     console.warn(`Recruiter scan failed for ${jobId}:`, err.message);
+  }
+
+  // Step 5: Conditional refinement
+  const trigger = shouldRefine({
+    matchScore: matchResult.match_score,
+    verdict: scanResult?.verdict,
+  });
+
+  if (!trigger) {
+    updateAndBroadcast(jobId, { status: 'complete' });
+    return;
+  }
+
+  updateAndBroadcast(jobId, { status: 'refining' });
+  try {
+    const refineResult = await withRetry(() =>
+      refineResume({
+        draftResume: tailorResult.tailored_resume,
+        jdText: freshJob.jd_text,
+        matchResult,
+        scanResult,
+        fitDimensions: fitResult.dimensions,
+        roleTitle: freshJob.role_title || 'this role',
+        company: freshJob.company || 'this company',
+      })
+    );
+
+    updateAndBroadcast(jobId, {
+      draft_resume: tailorResult.tailored_resume,
+      tailored_resume: refineResult.refined_resume,
+      refinement_notes: refineResult.refinement_notes,
+      refined_at: new Date().toISOString(),
+    });
+
+    // Re-evaluate on refined version
+    updateAndBroadcast(jobId, { status: 'evaluating' });
+    matchResult = await withRetry(() =>
+      evaluateMatch(refineResult.refined_resume, freshJob.jd_text)
+    );
+    updateAndBroadcast(jobId, {
+      match_score: matchResult.match_score,
+      match_keyword: matchResult.keyword_coverage,
+      match_evidence: matchResult.evidence_strength,
+      match_gaps: matchResult.gap_visibility,
+      match_suggestion: matchResult.improvement_suggestion,
+    });
+
+    // Re-scan on refined version
+    try {
+      const refinedScan = await withRetry(() =>
+        recruiterScan(
+          refineResult.refined_resume,
+          freshJob.jd_text,
+          freshJob.role_title || 'this role',
+          freshJob.company || 'this company'
+        )
+      );
+      updateAndBroadcast(jobId, {
+        recruiter_verdict: refinedScan.verdict,
+        recruiter_scan: JSON.stringify(refinedScan),
+      });
+    } catch (err) {
+      console.warn(`Post-refine scan failed for ${jobId}:`, err.message);
+    }
+
+    updateAndBroadcast(jobId, { status: 'complete' });
+  } catch (err) {
+    console.warn(`Refinement failed for ${jobId}:`, err.message);
     updateAndBroadcast(jobId, { status: 'complete' });
   }
 }

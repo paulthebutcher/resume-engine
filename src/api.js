@@ -48,6 +48,10 @@ export const deleteJob = (id) => request(`/jobs/${id}`, { method: 'DELETE' });
 export const setAppStatus = (id, status) =>
   request(`/jobs/${id}/status`, { method: 'PATCH', body: JSON.stringify({ application_status: status }) });
 
+// Interactive bullet regeneration
+export const regenerateBullet = (id, { bulletText, steer }) =>
+  request(`/jobs/${id}/regenerate-bullet`, { method: 'POST', body: JSON.stringify({ bulletText, steer }) });
+
 // Scout
 
 export const getScoutSearches = () => request('/scout/searches');

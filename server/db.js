@@ -68,6 +68,9 @@ const newCols = [
   ['status_updated_at', 'TEXT'],
   ['recruiter_verdict', 'TEXT'],
   ['recruiter_scan', 'TEXT'],
+  ['draft_resume', 'TEXT'],
+  ['refinement_notes', 'TEXT'],
+  ['refined_at', 'TEXT'],
 ];
 for (const [col, type] of newCols) {
   if (!jobCols.includes(col)) {

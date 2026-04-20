@@ -17,7 +17,7 @@ import {
   getCompTarget,
   setConfig as setUserConfigValue,
 } from './db.js';
-import { generateDefaultResume } from './claude.js';
+import { generateDefaultResume, regenerateBullet } from './claude.js';
 import { enqueueJob, enqueueJobWithFit, getQueueStatus } from './queue.js';
 import { generateDocx } from './docx.js';
 import { addClient, broadcastJob } from './sse.js';
@@ -153,6 +153,43 @@ app.post('/api/jobs/:id/rerun', (req, res) => {
 app.delete('/api/jobs/:id', (req, res) => {
   deleteJob(req.params.id);
   res.json({ ok: true });
+});
+
+app.post('/api/jobs/:id/regenerate-bullet', async (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (!job.tailored_resume) return res.status(400).json({ error: 'No tailored resume yet' });
+
+  const { bulletText, steer } = req.body;
+  if (!bulletText?.trim()) return res.status(400).json({ error: 'bulletText required' });
+  if (!job.tailored_resume.includes(bulletText)) {
+    return res.status(400).json({ error: 'bulletText not found in tailored resume' });
+  }
+
+  try {
+    const bank = getBank();
+    const result = await regenerateBullet({
+      bulletText,
+      steer: steer || '',
+      fullResume: job.tailored_resume,
+      jdText: job.jd_text,
+      bankContent: bank?.content || '',
+      roleTitle: job.role_title || 'this role',
+      company: job.company || 'this company',
+    });
+
+    // Splice the new bullet back in
+    const originalHasPrefix = /^\s*[-•]\s/.test(bulletText);
+    const prefix = originalHasPrefix ? bulletText.match(/^\s*[-•]\s/)[0] : '';
+    const replacement = prefix + result.new_bullet.replace(/^\s*[-•]\s*/, '');
+    const updatedResume = job.tailored_resume.replace(bulletText, replacement);
+    updateJob(job.id, { tailored_resume: updatedResume });
+    broadcastJob(getJob(job.id));
+
+    res.json({ new_bullet: replacement, note: result.note });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.patch('/api/jobs/:id/status', (req, res) => {

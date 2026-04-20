@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { rerunJob, deleteJob, downloadDocx, setAppStatus } from '../api.js';
+import { rerunJob, deleteJob, downloadDocx, setAppStatus, regenerateBullet } from '../api.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ const DIMENSION_LABELS = {
   compensation_plausibility: 'Comp Fit',
 };
 
-const STATUS_STEPS = ['queued', 'scoring', 'tailoring', 'evaluating', 'complete'];
+const STATUS_STEPS = ['queued', 'scoring', 'tailoring', 'evaluating', 'refining', 'complete'];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -80,10 +80,11 @@ function StatusBadge({ status }) {
     scoring:    'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
     tailoring:  'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
     evaluating: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400',
+    refining:   'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400',
     complete:   'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
     error:      'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
   };
-  const isActive = ['scoring', 'tailoring', 'evaluating'].includes(status);
+  const isActive = ['scoring', 'tailoring', 'evaluating', 'refining'].includes(status);
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${styles[status] || ''}`}>
       {isActive && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
@@ -97,7 +98,7 @@ function ProgressSteps({ status }) {
   if (idx === -1 || status === 'queued' || status === 'complete' || status === 'error') return null;
   return (
     <div className="flex items-center gap-1 px-4 py-1.5 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-800">
-      {['scoring', 'tailoring', 'evaluating'].map((step, i) => {
+      {['scoring', 'tailoring', 'evaluating', 'refining'].map((step, i, arr) => {
         const stepIdx = STATUS_STEPS.indexOf(step);
         const done = idx > stepIdx;
         const active = idx === stepIdx;
@@ -106,7 +107,7 @@ function ProgressSteps({ status }) {
             <span className={`text-xs ${done ? 'text-green-600 dark:text-green-400' : active ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-400'}`}>
               {done ? '✓ ' : active ? '⟳ ' : ''}{step}
             </span>
-            {i < 2 && <span className="text-gray-300 dark:text-gray-600 text-xs">→</span>}
+            {i < arr.length - 1 && <span className="text-gray-300 dark:text-gray-600 text-xs">→</span>}
           </React.Fragment>
         );
       })}
@@ -151,6 +152,104 @@ function DimensionBar({ dimKey, dim }) {
       {open && (
         <p className="text-xs text-gray-500 dark:text-gray-400 ml-44 pl-2 mt-1 mb-1">{dim.explanation}</p>
       )}
+    </div>
+  );
+}
+
+function InteractiveResume({ text, jobId, onUpdated }) {
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [steer, setSteer] = useState('');
+  const [regenning, setRegenning] = useState(false);
+  const [err, setErr] = useState('');
+  const [lastNote, setLastNote] = useState(null);
+
+  const lines = text.split('\n');
+
+  const canRegen = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    if (/^(SUMMARY|EXPERIENCE|EDUCATION|SKILLS|EARLY CAREER)$/i.test(trimmed)) return false;
+    if (/Paul Butcher \| Salt Lake City/.test(line)) return false;
+    return true;
+  };
+
+  const handleRegen = async (idx) => {
+    setRegenning(true);
+    setErr('');
+    try {
+      const result = await regenerateBullet(jobId, { bulletText: lines[idx], steer });
+      setLastNote({ idx, note: result.note });
+      setEditingIdx(null);
+      setSteer('');
+      onUpdated?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setRegenning(false);
+    }
+  };
+
+  return (
+    <div className="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded font-mono max-h-80 overflow-y-auto">
+      {lines.map((line, idx) => {
+        const regenerable = canRegen(line);
+        const isEditing = editingIdx === idx;
+        const showNote = lastNote && lastNote.idx === idx;
+        return (
+          <div key={idx} className="group relative">
+            <div className="flex items-start gap-2">
+              <pre className="flex-1 whitespace-pre-wrap min-h-[1em]">{line || ' '}</pre>
+              {regenerable && !isEditing && (
+                <button
+                  onClick={() => { setEditingIdx(idx); setSteer(''); setErr(''); }}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-600 hover:bg-white dark:hover:bg-gray-700 shrink-0"
+                  title="Regenerate this line"
+                >
+                  ⟲ Regen
+                </button>
+              )}
+            </div>
+            {isEditing && (
+              <div className="mt-1 mb-2 ml-0 p-2 rounded border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10 space-y-1.5">
+                <input
+                  type="text"
+                  value={steer}
+                  onChange={(e) => setSteer(e.target.value)}
+                  placeholder="What should this line emphasize? (optional — leave blank to just strengthen it)"
+                  className="w-full px-2 py-1 text-[11px] rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-400 font-sans"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !regenning) handleRegen(idx);
+                    if (e.key === 'Escape') { setEditingIdx(null); setSteer(''); }
+                  }}
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleRegen(idx)}
+                    disabled={regenning}
+                    className="text-[11px] px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 font-sans"
+                  >
+                    {regenning ? 'Regenerating…' : 'Regenerate'}
+                  </button>
+                  <button
+                    onClick={() => { setEditingIdx(null); setSteer(''); }}
+                    className="text-[11px] text-gray-500 hover:text-gray-700 font-sans"
+                  >
+                    Cancel
+                  </button>
+                  {err && <span className="text-[11px] text-red-500 font-sans">{err}</span>}
+                </div>
+              </div>
+            )}
+            {showNote && !isEditing && (
+              <p className="text-[10px] text-blue-700 dark:text-blue-400 italic pl-2 font-sans">
+                {lastNote.note}
+                <button onClick={() => setLastNote(null)} className="ml-2 text-gray-400 hover:text-gray-600">×</button>
+              </p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -203,6 +302,7 @@ export default function JobCard({ job, onDeleted, onUpdated, onRerun, bankUpdate
   const [expanded, setExpanded] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [tailoringOpen, setTailoringOpen] = useState(false);
+  const [showDraft, setShowDraft] = useState(false);
 
   const isStale =
     job.status === 'complete' &&
@@ -346,15 +446,51 @@ export default function JobCard({ job, onDeleted, onUpdated, onRerun, bankUpdate
           {/* Tailored Resume */}
           {job.tailored_resume && (
             <div className="px-4 py-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Tailored Resume</h4>
-                <div className="flex gap-2">
-                  <CopyButton text={job.tailored_resume} />
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    {showDraft && job.draft_resume ? 'Draft Resume (pre-refinement)' : 'Tailored Resume'}
+                  </h4>
+                  {job.draft_resume && !showDraft && (
+                    <span
+                      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-teal-200 dark:border-teal-800"
+                      title="This resume was refined based on the recruiter scan and match evaluation."
+                    >
+                      refined
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {job.draft_resume && (
+                    <button
+                      onClick={() => setShowDraft(!showDraft)}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                      {showDraft ? 'Show refined' : 'Show draft'}
+                    </button>
+                  )}
+                  <CopyButton text={showDraft && job.draft_resume ? job.draft_resume : job.tailored_resume} />
                 </div>
               </div>
-              <pre className="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded whitespace-pre-wrap font-mono max-h-80 overflow-y-auto">
-                {job.tailored_resume}
-              </pre>
+              {showDraft && job.draft_resume ? (
+                <pre className="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded whitespace-pre-wrap font-mono max-h-80 overflow-y-auto">
+                  {job.draft_resume}
+                </pre>
+              ) : (
+                <InteractiveResume
+                  text={job.tailored_resume}
+                  jobId={job.id}
+                  onUpdated={() => onRerun && onRerun()}
+                />
+              )}
+
+              {/* Refinement notes */}
+              {job.refinement_notes && !showDraft && (
+                <div className="bg-teal-50 dark:bg-teal-900/20 border border-teal-100 dark:border-teal-900 rounded p-2">
+                  <p className="text-xs font-medium text-teal-700 dark:text-teal-400 mb-0.5">Refinement notes</p>
+                  <p className="text-xs text-teal-900 dark:text-teal-200">{job.refinement_notes}</p>
+                </div>
+              )}
 
               {/* Tailoring notes */}
               {job.tailoring_notes && (
