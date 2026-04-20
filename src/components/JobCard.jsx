@@ -19,7 +19,7 @@ const DIMENSION_LABELS = {
   domain_industry:        'Domain / Industry',
   seniority_scope:        'Seniority & Scope',
   strategic_value:        'Strategic Value',
-  compensation_plausibility: 'Comp Plausibility',
+  compensation_plausibility: 'Comp Fit',
 };
 
 const STATUS_STEPS = ['queued', 'scoring', 'tailoring', 'evaluating', 'complete'];
@@ -155,6 +155,23 @@ function DimensionBar({ dimKey, dim }) {
   );
 }
 
+function VerdictBadge({ verdict }) {
+  const styles = {
+    forward: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 border-green-200 dark:border-green-800',
+    maybe:   'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800',
+    reject:  'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 border-red-200 dark:border-red-800',
+  };
+  const cls = styles[verdict] || 'bg-gray-100 text-gray-600 border-gray-200';
+  return (
+    <span
+      className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border font-semibold ${cls}`}
+      title="Recruiter scan verdict"
+    >
+      {verdict}
+    </span>
+  );
+}
+
 function AppStatusDropdown({ jobId, currentStatus, onUpdated }) {
   const current = APP_STATUSES.find((s) => s.value === currentStatus) || APP_STATUSES[0];
   const handleChange = async (e) => {
@@ -195,6 +212,7 @@ export default function JobCard({ job, onDeleted, onUpdated, onRerun, bankUpdate
 
   const dimensions = job.fit_dimensions ? (() => { try { return JSON.parse(job.fit_dimensions); } catch { return null; } })() : null;
   const gaps = job.gaps_to_address ? (() => { try { return JSON.parse(job.gaps_to_address); } catch { return []; } })() : [];
+  const recruiterScan = job.recruiter_scan ? (() => { try { return JSON.parse(job.recruiter_scan); } catch { return null; } })() : null;
 
   const canExpand = job.status === 'complete' || (job.composite_score != null && job.status !== 'error');
 
@@ -245,6 +263,7 @@ export default function JobCard({ job, onDeleted, onUpdated, onRerun, bankUpdate
                     Match: {job.match_score}
                   </span>
                 )}
+                {job.recruiter_verdict && <VerdictBadge verdict={job.recruiter_verdict} />}
                 <AppStatusDropdown jobId={job.id} currentStatus={job.application_status} onUpdated={handleOptimisticUpdate} />
               </div>
             )}
@@ -386,6 +405,52 @@ export default function JobCard({ job, onDeleted, onUpdated, onRerun, bankUpdate
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Recruiter Scan */}
+          {recruiterScan && (
+            <div className="px-4 py-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Recruiter Scan</h4>
+                {job.recruiter_verdict && <VerdictBadge verdict={job.recruiter_verdict} />}
+              </div>
+
+              {recruiterScan.instant_impression && (
+                <blockquote className="text-sm italic text-gray-700 dark:text-gray-300 border-l-2 border-gray-300 dark:border-gray-600 pl-3">
+                  {recruiterScan.instant_impression}
+                </blockquote>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {recruiterScan.buried_strengths?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-green-700 dark:text-green-400 mb-1">Buried strengths</p>
+                    <ul className="space-y-1">
+                      {recruiterScan.buried_strengths.map((s, i) => (
+                        <li key={i} className="text-xs text-gray-700 dark:text-gray-300 pl-3 -indent-3">• {s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {recruiterScan.red_flags?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Red flags</p>
+                    <ul className="space-y-1">
+                      {recruiterScan.red_flags.map((f, i) => (
+                        <li key={i} className="text-xs text-gray-700 dark:text-gray-300 pl-3 -indent-3">• {f}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {recruiterScan.top_fix && (
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900 rounded p-2">
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-0.5">Top fix</p>
+                  <p className="text-sm text-amber-900 dark:text-amber-200">{recruiterScan.top_fix}</p>
+                </div>
+              )}
             </div>
           )}
 

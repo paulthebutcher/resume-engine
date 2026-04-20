@@ -10,7 +10,7 @@ import {
   getConfig,
   startRun, updateRun, getActiveRun,
 } from './scout-db.js';
-import { getBank } from './db.js';
+import { getBank, getCompTarget } from './db.js';
 import { scoreFit } from './claude.js';
 import { enqueueScoutScore, withRetry } from './queue.js';
 import { broadcastScout } from './sse.js';
@@ -131,13 +131,14 @@ export async function runScout() {
     } else {
       const pending = listListings({ status: 'pending' });
       console.log(`[Scout] Auto-scoring ${pending.length} pending listings`);
+      const compTarget = getCompTarget();
 
       const scorePromises = pending.map((listing) =>
         enqueueScoutScore(listing.id, async () => {
           try {
             updateListing(listing.id, { auto_score_status: 'scoring' });
             const fitResult = await withRetry(() =>
-              scoreFit(bank.content, listing.jd_text || listing.role_title)
+              scoreFit(bank.content, listing.jd_text || listing.role_title, compTarget)
             );
             updateListing(listing.id, {
               auto_score_status: 'scored',

@@ -1,6 +1,6 @@
 import PQueue from 'p-queue';
-import { getJob, updateJob, getBank, getDefaultResume } from './db.js';
-import { scoreFit, tailorResume, evaluateMatch } from './claude.js';
+import { getJob, updateJob, getBank, getDefaultResume, getCompTarget } from './db.js';
+import { scoreFit, tailorResume, evaluateMatch, recruiterScan } from './claude.js';
 import { broadcastJob } from './sse.js';
 
 // Priority constants: higher = runs first
@@ -75,7 +75,7 @@ async function processJob(jobId) {
   try {
     // Step 1: Fit Assessment
     updateAndBroadcast(jobId, { status: 'scoring' });
-    const fitResult = await withRetry(() => scoreFit(bank.content, job.jd_text));
+    const fitResult = await withRetry(() => scoreFit(bank.content, job.jd_text, getCompTarget()));
     updateAndBroadcast(jobId, {
       company: fitResult.company || job.company,
       role_title: fitResult.role_title || job.role_title,
@@ -147,13 +147,33 @@ async function runTailorAndEvaluate(jobId, fitResult, bankContent, defaultResume
     evaluateMatch(tailorResult.tailored_resume, job.jd_text)
   );
   updateAndBroadcast(jobId, {
-    status: 'complete',
     match_score: matchResult.match_score,
     match_keyword: matchResult.keyword_coverage,
     match_evidence: matchResult.evidence_strength,
     match_gaps: matchResult.gap_visibility,
     match_suggestion: matchResult.improvement_suggestion,
   });
+
+  // Step 4: Recruiter Scan
+  const freshJob = getJob(jobId);
+  try {
+    const scanResult = await withRetry(() =>
+      recruiterScan(
+        tailorResult.tailored_resume,
+        freshJob.jd_text,
+        freshJob.role_title || 'this role',
+        freshJob.company || 'this company'
+      )
+    );
+    updateAndBroadcast(jobId, {
+      status: 'complete',
+      recruiter_verdict: scanResult.verdict,
+      recruiter_scan: JSON.stringify(scanResult),
+    });
+  } catch (err) {
+    console.warn(`Recruiter scan failed for ${jobId}:`, err.message);
+    updateAndBroadcast(jobId, { status: 'complete' });
+  }
 }
 
 export function getQueueStatus() {

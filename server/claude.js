@@ -14,7 +14,9 @@ function parseJSON(text, label) {
 }
 
 // ── Step 1: Fit Assessment ────────────────────────────────────────────────────
-export async function scoreFit(bankContent, jdText) {
+export async function scoreFit(bankContent, jdText, compTarget = { min: 150000, max: 190000 }) {
+  const targetMinK = Math.round(compTarget.min / 1000);
+  const targetMaxK = Math.round(compTarget.max / 1000);
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,
@@ -54,7 +56,7 @@ Return ONLY valid JSON. No markdown fences, no preamble.
     "compensation_plausibility": {
       "score": <0-100>,
       "weight": 10,
-      "explanation": "<1-2 sentences. Based on company stage, location, and role level, is comp likely in the $150K-$190K base range? Flag if signals suggest significantly below.>"
+      "explanation": "<1-2 sentences. Score how attractive this role's likely base compensation is RELATIVE TO the candidate's target of $${targetMinK}K–$${targetMaxK}K. Infer likely comp from company stage, funding, location, role level, and any stated ranges. Scoring: signals clearly AT OR ABOVE $${targetMaxK}K → 85–100; signals within or near the $${targetMinK}K–$${targetMaxK}K target → 80–95; ~10% below target → 60–75; 20%+ below target → <50; no compensation signals in the JD → ~70 (neutral). Above-target pay is GOOD and must score high.>"
     }
   },
   "composite_score": <0-100, weighted average of dimensions>,
@@ -143,6 +145,35 @@ Scoring: This is about presentation quality, not candidate fit. A 60 fit candida
   });
 
   return parseJSON(response.content[0].text, 'match evaluation');
+}
+
+// ── Step 4: Recruiter Scan ────────────────────────────────────────────────────
+export async function recruiterScan(tailoredResume, jdText, roleTitle, company) {
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 1024,
+    system: `You are a seasoned tech recruiter screening resumes for a "${roleTitle}" role at ${company}. You have 30 seconds per resume and 80 to get through. You are deciding: forward to hiring manager, reject, or maybe.
+
+Read the resume like a skim, not a deep read. What pops in the first 5 seconds? What would a human notice that a keyword scanner would miss? What would make you hesitate?
+
+Return ONLY valid JSON. No markdown fences, no preamble.
+
+{
+  "verdict": "forward" | "maybe" | "reject",
+  "instant_impression": "<1-2 sentences. What a recruiter sees in the top third of the resume — the one-line story that jumps out, before reading carefully.>",
+  "buried_strengths": ["<relevant strength the recruiter would likely miss in a 30-second scan — something in the resume that supports the role but isn't in the top third or isn't phrased prominently. 1-3 items.>"],
+  "red_flags": ["<thing that would make a recruiter pause: title mismatch, short tenure, gap, unclear scope, mismatched domain. Be specific to THIS resume and JD. 1-3 items.>"],
+  "top_fix": "<1 sentence. The single most impactful edit to move from the current verdict to a stronger one. Concrete and actionable — not 'tailor better'.>"
+}
+
+Be honest. If the resume is weak for this specific role, say reject. A realistic "maybe" beats an inflated "forward". A "forward" should mean: this resume, as-is, would survive a recruiter screen and reach the hiring manager.`,
+    messages: [{
+      role: 'user',
+      content: `=== ROLE ===\n${roleTitle} at ${company}\n\n=== JOB DESCRIPTION ===\n${jdText}\n\n=== CANDIDATE RESUME ===\n${tailoredResume}`,
+    }],
+  });
+
+  return parseJSON(response.content[0].text, 'recruiter scan');
 }
 
 // ── Default Resume Generation (unchanged) ────────────────────────────────────

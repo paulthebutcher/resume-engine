@@ -20,6 +20,14 @@ async function request(path, opts = {}) {
 export const getBank = () => request('/bank');
 export const saveBank = (content) => request('/bank', { method: 'PUT', body: JSON.stringify({ content }) });
 
+// User config
+export const getUserConfig = () => request('/user/config');
+export const saveUserConfig = ({ min, max }) =>
+  request('/user/config', { method: 'PUT', body: JSON.stringify({ min, max }) });
+
+// Analytics
+export const getOutcomeAnalytics = () => request('/analytics/outcomes');
+
 // Resume
 export const getResume = () => request('/resume');
 export const saveResume = (content) => request('/resume', { method: 'PUT', body: JSON.stringify({ content }) });

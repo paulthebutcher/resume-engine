@@ -14,6 +14,8 @@ import {
   listJobs,
   deleteJob,
   setApplicationStatus,
+  getCompTarget,
+  setConfig as setUserConfigValue,
 } from './db.js';
 import { generateDefaultResume } from './claude.js';
 import { enqueueJob, enqueueJobWithFit, getQueueStatus } from './queue.js';
@@ -28,6 +30,7 @@ import {
 import { runScout, getScoutRunning } from './scout.js';
 import { searchExa, getExaApiKey } from './exa.js';
 import { fetchJobJd } from './ats.js';
+import { computeOutcomeCorrelations } from './analytics.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -71,6 +74,35 @@ app.post('/api/resume/generate', async (req, res) => {
     console.error('Generate resume error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+app.get('/api/analytics/outcomes', (req, res) => {
+  try {
+    res.json(computeOutcomeCorrelations());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── User Config ───────────────────────────────────────────────────────────────
+app.get('/api/user/config', (req, res) => {
+  res.json(getCompTarget());
+});
+
+app.put('/api/user/config', (req, res) => {
+  const { min, max } = req.body;
+  const minNum = Number(min);
+  const maxNum = Number(max);
+  if (!Number.isInteger(minNum) || !Number.isInteger(maxNum) || minNum <= 0 || maxNum <= 0) {
+    return res.status(400).json({ error: 'min and max must be positive integers' });
+  }
+  if (minNum > maxNum) {
+    return res.status(400).json({ error: 'min must be less than or equal to max' });
+  }
+  setUserConfigValue('comp_target_min', String(minNum));
+  setUserConfigValue('comp_target_max', String(maxNum));
+  res.json(getCompTarget());
 });
 
 // ── SSE stream ────────────────────────────────────────────────────────────────

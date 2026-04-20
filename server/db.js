@@ -32,8 +32,15 @@ db.exec(`
     error TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS user_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
   INSERT OR IGNORE INTO experience_bank (id, content) VALUES ('singleton', '');
   INSERT OR IGNORE INTO default_resume (id, content) VALUES ('singleton', '');
+  INSERT OR IGNORE INTO user_config (key, value) VALUES ('comp_target_min', '150000');
+  INSERT OR IGNORE INTO user_config (key, value) VALUES ('comp_target_max', '190000');
 `);
 
 // ── Migrations ────────────────────────────────────────────────────────────────
@@ -58,6 +65,9 @@ const newCols = [
   ['match_gaps', 'TEXT'],
   ['match_suggestion', 'TEXT'],
   ['tailoring_notes', 'TEXT'],
+  ['status_updated_at', 'TEXT'],
+  ['recruiter_verdict', 'TEXT'],
+  ['recruiter_scan', 'TEXT'],
 ];
 for (const [col, type] of newCols) {
   if (!jobCols.includes(col)) {
@@ -69,6 +79,7 @@ for (const [col, type] of newCols) {
 db.exec(`
   UPDATE jobs SET composite_score = fit_score WHERE composite_score IS NULL AND fit_score IS NOT NULL;
   UPDATE jobs SET fit_summary = fit_analysis WHERE fit_summary IS NULL AND fit_analysis IS NOT NULL;
+  UPDATE jobs SET status_updated_at = created_at WHERE status_updated_at IS NULL;
 `);
 
 // ── Experience Bank ───────────────────────────────────────────────────────────
@@ -144,9 +155,27 @@ export function listJobs({ sort = 'created_at', order = 'DESC', search = '', app
 }
 
 export function setApplicationStatus(id, status) {
-  db.prepare('UPDATE jobs SET application_status = ? WHERE id = ?').run(status || null, id);
+  db.prepare(
+    "UPDATE jobs SET application_status = ?, status_updated_at = datetime('now') WHERE id = ?"
+  ).run(status || null, id);
 }
 
 export function deleteJob(id) {
   db.prepare('DELETE FROM jobs WHERE id = ?').run(id);
+}
+
+// ── User Config ───────────────────────────────────────────────────────────────
+export function getConfig(key) {
+  const row = db.prepare('SELECT value FROM user_config WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+export function setConfig(key, value) {
+  db.prepare('INSERT OR REPLACE INTO user_config (key, value) VALUES (?, ?)').run(key, value);
+}
+
+export function getCompTarget() {
+  const min = Number(getConfig('comp_target_min')) || 150000;
+  const max = Number(getConfig('comp_target_max')) || 190000;
+  return { min, max };
 }

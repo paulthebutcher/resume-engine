@@ -4,6 +4,7 @@ import ResumeEditor from './components/ResumeEditor.jsx';
 import JobInput from './components/JobInput.jsx';
 import JobList from './components/JobList.jsx';
 import Scout from './components/Scout.jsx';
+import Insights from './components/Insights.jsx';
 import { getJobs, getBank, getResume, getScoutStatus } from './api.js';
 
 export default function App() {
@@ -139,6 +140,7 @@ export default function App() {
         {tab === 'Tailor' && (
           <div className="space-y-6">
             <JobInput onSubmit={loadJobs} />
+            <Insights />
             <JobList
               jobs={jobs}
               onDeleted={handleJobDeleted}
